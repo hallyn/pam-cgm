@@ -41,6 +41,56 @@ static void mysyslog(int err, const char *format, ...)
 	closelog();
 }
 
+extern char *ctrl_list;
+
+static void get_active_controllers(void)
+{
+	int i;
+	nih_local char **list = cgm_list_controllers();
+
+	if (!list) {
+		mysyslog(LOG_NOTICE, "unable to detect controllers");
+		ctrl_list = NIH_MUST( nih_strdup(NULL, "all") );
+		return;
+	}
+	for (i = 0; list[i]; i++) {
+		if (strcmp(list[i], "name=systemd") == 0)
+			continue;
+		NIH_MUST( nih_strcat_sprintf(&ctrl_list, NULL, "%s%s",
+			ctrl_list ? "," : "", list[i]) );
+	}
+}
+
+static bool is_in_list(char *which, char **list) {
+	int i;
+
+	for (i = 0; list[i]; i++) {
+		if (strcmp(which, list[i]) == 0)
+			return true;
+	}
+	return false;
+}
+
+static char *validate_and_dup(const char *arg)
+{
+	nih_local char *d = NIH_MUST( nih_strdup(NULL, arg) );
+	nih_local char **valid_list = cgm_list_controllers();
+	char *tok;
+
+	if (!valid_list) {
+		mysyslog(LOG_ERR, "Failed to get controller list\n");
+		return NULL;
+	}
+
+	for (tok = strtok(d, ","); tok; tok = strtok(NULL, ",")) {
+		if (!is_in_list(tok, valid_list)) {
+			mysyslog(LOG_ERR, "Invalid controller: %s\n", tok);
+			return NULL;
+		}
+	}
+	return NIH_MUST( nih_strdup(NULL, arg) );
+}
+
 static bool get_uid_gid(const char *user, uid_t *uid, gid_t *gid)
 {
 	struct passwd *pwent;
@@ -125,13 +175,19 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
 	const char *PAM_user = NULL;
 	int ret;
 
-	ret = pam_get_user(pamh, &PAM_user, NULL);
-	if (ret != PAM_SUCCESS) {
-		mysyslog(LOG_ERR, "PAM-NS: couldn't get user\n");
-		return PAM_SESSION_ERR;
-	}
 	if (!cgm_dbus_connect()) {
 		mysyslog(LOG_ERR, "Failed to connect to cgmanager\n");
+		return PAM_SESSION_ERR;
+	}
+	if (argc > 1 && strcmp(argv[0], "-c") == 0)
+		ctrl_list = validate_and_dup(argv[1]);
+	if (!ctrl_list) 
+		get_active_controllers();
+
+	ret = pam_get_user(pamh, &PAM_user, NULL);
+	if (ret != PAM_SUCCESS) {
+		cgm_dbus_disconnect();
+		mysyslog(LOG_ERR, "PAM-NS: couldn't get user\n");
 		return PAM_SESSION_ERR;
 	}
 

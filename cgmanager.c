@@ -59,7 +59,7 @@ void cgm_dbus_disconnect(void)
        cgroup_manager = NULL;
 }
 
-static char *ctrl_list;
+char *ctrl_list;
 
 #define CGMANAGER_DBUS_SOCK "unix:path=/sys/fs/cgroup/cgmanager/sock"
 bool cgm_dbus_connect(void)
@@ -164,4 +164,18 @@ bool cgm_chown(const char *cg, uid_t uid, gid_t gid)
 		return false;
 	}
 	return true;
+}
+
+char **cgm_list_controllers(void)
+{
+	char **controllers;
+	if ( cgmanager_list_controllers_sync(NULL, cgroup_manager, &controllers) != 0 ) {
+		NihError *nerr;
+		nerr = nih_error_get();
+		fprintf(stderr, "call to list_controllers failed: %s\n", nerr->message);
+		nih_free(nerr);
+		cgm_dbus_disconnect();
+		return NULL;
+	}
+	return controllers;
 }
