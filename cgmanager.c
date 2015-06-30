@@ -152,3 +152,16 @@ bool cgm_enter(const char *cg)
 	}
 	return true;
 }
+
+bool cgm_chown(const char *cg, uid_t uid, gid_t gid)
+{
+	if ( cgmanager_chown_sync(NULL, cgroup_manager, ctrl_list, cg, uid, gid) != 0) {
+		NihError *nerr;
+		nerr = nih_error_get();
+		fprintf(stderr, "call to chown (%s:%s, %d, %d) failed: %s\n", ctrl_list, cg, uid, gid, nerr->message);
+		nih_free(nerr);
+		cgm_dbus_disconnect();
+		return false;
+	}
+	return true;
+}

@@ -15,6 +15,7 @@
 #include <sys/mount.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <pwd.h>
 
 #define PAM_SM_SESSION
 #include <security/_pam_macros.h>
@@ -29,7 +30,7 @@
 
 #include "cgmanager.h"
 
-void mysyslog(int err, const char *format, ...)
+static void mysyslog(int err, const char *format, ...)
 {       
 	va_list args;
 
@@ -40,14 +41,34 @@ void mysyslog(int err, const char *format, ...)
 	closelog();
 }
 
+static bool get_uid_gid(const char *user, uid_t *uid, gid_t *gid)
+{
+	struct passwd *pwent;
+
+	pwent = getpwnam(user);
+	if (!pwent)
+		return false;
+	*uid = pwent->pw_uid;
+	*gid = pwent->pw_gid;
+
+	return true;
+}
+
 #define DIRNAMSZ 200
-int handle_login(const char *user)
+static int handle_login(const char *user)
 {
 	int idx = 0;
 	int existed = 1;
 	size_t ulen = strlen(user);
 	size_t len = ulen + 50;
+	uid_t uid = 0;
+	gid_t gid = 0;
 	nih_local char *cg = NIH_MUST( nih_alloc(NULL, len) );
+
+	if (!get_uid_gid(user, &uid, &gid)) {
+		mysyslog(LOG_ERR, "failed to get uid and gid for %s\n", user);
+		return PAM_SESSION_ERR;
+	}
 
 	memset(cg, 0, len);
 	strcpy(cg, user);
@@ -78,6 +99,10 @@ int handle_login(const char *user)
 		if (existed == 1) {
 			idx++;
 			continue;
+		}
+
+		if (!cgm_chown(cg, uid, gid)) {
+			mysyslog(LOG_ERR, "Warning: failed to chown %s\n", cg);
 		}
 
 		if (!cgm_autoremove(cg)) {
