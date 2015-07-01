@@ -195,6 +195,7 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
 		ctrl_list = validate_and_dup(argv[1]);
 	if (!ctrl_list) 
 		get_active_controllers();
+	cgm_escape();
 
 	ret = pam_get_user(pamh, &PAM_user, NULL);
 	if (ret != PAM_SUCCESS) {
@@ -223,6 +224,8 @@ static void prune_user_cgs(const char *user)
 		if (!cgm_cg_has_tasks(cgpath))
 			cgm_clear_cgroup(cgpath);
 	}
+	if (!cgm_cg_has_tasks(path))
+		cgm_clear_cgroup(path);
 }
 
 int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
@@ -237,6 +240,11 @@ int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
 	}
 
 	if (cgm_dbus_connect()) {
+		if (argc > 1 && strcmp(argv[0], "-c") == 0)
+			ctrl_list = validate_and_dup(argv[1]);
+		if (!ctrl_list) 
+			get_active_controllers();
+		cgm_escape();
 		prune_user_cgs(PAM_user);
 		cgm_dbus_disconnect();
 	}

@@ -101,15 +101,6 @@ bool cgm_dbus_connect(void)
 		return false;
 	}
 
-	/*
-	 * TODO - we will probably want to build a controller list to use.  We
-	 * will prefer a list taken from a config file;  failing that we'll use
-	 * all controllers except name=systemd
-	 *
-	 * But for this first test, use "all"
-	 */
-	ctrl_list = NIH_MUST( nih_strdup(NULL, "all") );
-
 	return true;
 }
 
@@ -220,6 +211,16 @@ void cgm_clear_cgroup(const char *cg)
 		NihError *nerr;
 		nerr = nih_error_get();
 		fprintf(stderr, "warning: call to remove(%s) failed: %s\n", cg, nerr->message);
+		nih_free(nerr);
+	}
+}
+
+void cgm_escape(void)
+{
+	if ( cgmanager_move_pid_abs_sync(NULL, cgroup_manager, ctrl_list, "/", (int32_t) getpid()) != 0) {
+		NihError *nerr;
+		nerr = nih_error_get();
+		fprintf(stderr, "warning: attempt to escape to root cgroup failed: %s\n", nerr->message);
 		nih_free(nerr);
 	}
 }

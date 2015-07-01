@@ -10,3 +10,4 @@ char **cgm_list_controllers(void);
 char **cgm_list_children(const char *cg);
 bool cgm_cg_has_tasks(const char *cg);
 void cgm_clear_cgroup(const char *cg);
+void cgm_escape(void);
