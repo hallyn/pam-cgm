@@ -120,8 +120,7 @@ bool cgm_create(const char *cg, int32_t *existed)
 		nerr = nih_error_get();
 		fprintf(stderr, "call to create failed (%s:%s): %s\n", ctrl_list, cg, nerr->message);
 		nih_free(nerr);
-		cgm_dbus_disconnect();
-		_exit(1);
+		return false;
 	}
 	return true;
 }
@@ -133,7 +132,6 @@ bool cgm_autoremove(const char *cg)
 		nerr = nih_error_get();
 		fprintf(stderr, "call to remove-on-empty (%s:%s) failed: %s\n", ctrl_list, cg, nerr->message);
 		nih_free(nerr);
-		cgm_dbus_disconnect();
 		return false;
 	}
 	return true;
@@ -147,7 +145,6 @@ bool cgm_enter(const char *cg)
 		nerr = nih_error_get();
 		fprintf(stderr, "call to move_pid (%s:%s, %d) failed: %s\n", ctrl_list, cg, (int)getpid(), nerr->message);
 		nih_free(nerr);
-		cgm_dbus_disconnect();
 		return false;
 	}
 	return true;
@@ -160,7 +157,6 @@ bool cgm_chown(const char *cg, uid_t uid, gid_t gid)
 		nerr = nih_error_get();
 		fprintf(stderr, "call to chown (%s:%s, %d, %d) failed: %s\n", ctrl_list, cg, uid, gid, nerr->message);
 		nih_free(nerr);
-		cgm_dbus_disconnect();
 		return false;
 	}
 	return true;
@@ -174,8 +170,56 @@ char **cgm_list_controllers(void)
 		nerr = nih_error_get();
 		fprintf(stderr, "call to list_controllers failed: %s\n", nerr->message);
 		nih_free(nerr);
-		cgm_dbus_disconnect();
 		return NULL;
 	}
 	return controllers;
+}
+
+/*
+ * We can't list_children on >1 (not-comounted) controllers.
+ * So choose the first controller and get the children of it
+ */
+char **cgm_list_children(const char *cg)
+{
+	char **children;
+	nih_local char *ctrl = NIH_MUST( nih_strdup(NULL, ctrl_list) );
+	char *p = strchr(ctrl, ',');
+	if (p)
+		*p = '\0';
+	if ( cgmanager_list_children_sync(NULL, cgroup_manager, ctrl, cg, &children) != 0 ) {
+		NihError *nerr;
+		nerr = nih_error_get();
+		fprintf(stderr, "call to list_children failed: %s\n", nerr->message);
+		nih_free(nerr);
+		return NULL;
+	}
+	return children;
+}
+
+bool cgm_cg_has_tasks(const char *cg)
+{
+	nih_local int32_t * pids;
+	size_t len;
+
+	if ( cgmanager_get_tasks_recursive_sync(NULL, cgroup_manager, ctrl_list, cg, &pids, &len) != 0 ) {
+		NihError *nerr;
+		nerr = nih_error_get();
+		fprintf(stderr, "call to get_tasks_recursive failed: %s\n", nerr->message);
+		nih_free(nerr);
+		return false;
+	}
+	return len > 0;
+}
+
+void cgm_clear_cgroup(const char *cg)
+{
+	int32_t recursive = 1;
+	int32_t existed;
+
+	if ( cgmanager_remove_sync(NULL, cgroup_manager, ctrl_list, cg, recursive, &existed) != 0) {
+		NihError *nerr;
+		nerr = nih_error_get();
+		fprintf(stderr, "warning: call to remove(%s) failed: %s\n", cg, nerr->message);
+		nih_free(nerr);
+	}
 }

@@ -3,6 +3,14 @@
  * Copyright © 2015 Canonical, Inc
  * Author: Serge Hallyn <serge.hallyn@ubuntu.com>
  *
+ * When a user logs in, this pam module will create cgroups which
+ * the user may administer, for all controllers except name=systemd,
+ * or for any controllers listed on the command line (if any are
+ * listed).
+ *
+ * The cgroup created will be "user/$user/0" for the first session,
+ * "user/$user/1" for the second, etc.
+ *
  * See COPYING file for details.
  */
 
@@ -107,10 +115,10 @@ static bool get_uid_gid(const char *user, uid_t *uid, gid_t *gid)
 #define DIRNAMSZ 200
 static int handle_login(const char *user)
 {
-	int idx = 0;
+	int idx = 0, ret;
 	int existed = 1;
-	size_t ulen = strlen(user);
-	size_t len = ulen + 50;
+	size_t ulen = strlen("user/") + strlen(user);
+	size_t len = ulen + 50; // Just make sure there's room for "user/$user or an <integer>"
 	uid_t uid = 0;
 	gid_t gid = 0;
 	nih_local char *cg = NIH_MUST( nih_alloc(NULL, len) );
@@ -123,24 +131,28 @@ static int handle_login(const char *user)
 	memset(cg, 0, len);
 	strcpy(cg, user);
 
-	if (!cgm_create("user", &existed)) {
-		mysyslog(LOG_ERR, "failed to create a user cgroup\n");
+	ret = snprintf(cg, len, "user/%s", user);
+	if (ret < 0 || ret >= len)
+		return PAM_SESSION_ERR;
+
+	if (!cgm_create(cg, &existed)) {
+		mysyslog(LOG_ERR, "failed to create cgroup %s\n", cg);
 		return PAM_SESSION_ERR;
 	}
 
 	if (existed == 0) {
-		if (!cgm_autoremove("user")) {
-			mysyslog(LOG_ERR, "Warning: failed to set autoremove on user\n");
+		if (!cgm_autoremove(cg)) {
+			mysyslog(LOG_ERR, "Warning: failed to set autoremove on %s\n", cg);
 		}
 	}
 
-	if (!cgm_enter("user")) {
-		mysyslog(LOG_ERR, "failed to enter user cgroup\n");
+	if (!cgm_enter(cg)) {
+		mysyslog(LOG_ERR, "failed to enter cgroup %s\n", cg);
 		return PAM_SESSION_ERR;
 	}
 
 	while (idx >= 0) {
-		sprintf(cg + ulen, "%d", idx);
+		sprintf(cg, "%d", idx);
 		if (!cgm_create(cg, &existed)) {
 			mysyslog(LOG_ERR, "failed to create a user cgroup\n");
 			return PAM_SESSION_ERR;
@@ -187,7 +199,7 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
 	ret = pam_get_user(pamh, &PAM_user, NULL);
 	if (ret != PAM_SUCCESS) {
 		cgm_dbus_disconnect();
-		mysyslog(LOG_ERR, "PAM-NS: couldn't get user\n");
+		mysyslog(LOG_ERR, "PAM-CGM: couldn't get user\n");
 		return PAM_SESSION_ERR;
 	}
 
@@ -196,8 +208,37 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
 	return ret;
 }
 
+static void prune_user_cgs(const char *user)
+{
+	nih_local char **list = NULL;
+	nih_local char *path = NULL;
+	int i;
+
+	path = NIH_MUST( nih_sprintf(NULL, "user/%s", user) );
+	list = cgm_list_children(path);
+	if (!list)
+		return;
+	for (i = 0; list[i]; i++) {
+		nih_local char *cgpath = NIH_MUST( nih_sprintf(NULL, "%s/%s", path, list[i]) );
+		if (!cgm_cg_has_tasks(cgpath))
+			cgm_clear_cgroup(cgpath);
+	}
+}
+
 int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
 		const char **argv)
 {
+	const char *PAM_user = NULL;
+	int ret = pam_get_user(pamh, &PAM_user, NULL);
+
+	if (ret != PAM_SUCCESS) {
+		mysyslog(LOG_ERR, "PAM-CGM: couldn't get user\n");
+		return PAM_SESSION_ERR;
+	}
+
+	if (cgm_dbus_connect()) {
+		prune_user_cgs(PAM_user);
+		cgm_dbus_disconnect();
+	}
 	return PAM_SUCCESS;
 }
